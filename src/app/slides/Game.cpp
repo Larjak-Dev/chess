@@ -121,7 +121,7 @@ void GameSlide::drawPieces(phys::chess::Board &board)
                     this->selected_square = {x, y};
 
                     auto piece_on_square = phys::chess::getPiece(this->selected_square, this->game_context.board);
-                    if (chess::isWhite(piece_on_square) == this->game_context.whiteTurn &&
+                    if (chess::isWhite(piece_on_square) == this->game_context.is_white_turn &&
                         phys::chess::isPromotion(this->selected_square, this->game_context))
                     {
                         ImGui::OpenPopup("PromotionMenu");
@@ -192,7 +192,7 @@ void GameSlide::tickContent()
     // Front Layer
     draw_list->ChannelsSetCurrent(1);
 
-    if (!chess::isEmpty(piece_on_selected) && chess::isWhite(piece_on_selected) == this->game_context.whiteTurn)
+    if (!chess::isEmpty(piece_on_selected) && chess::isWhite(piece_on_selected) == this->game_context.is_white_turn)
     {
         chess::Moves moves;
         chess::getMoves(moves, this->selected_square, this->game_context);
@@ -226,7 +226,7 @@ void GameSlide::drawPromote()
 
     using ptype = phys::chess::PieceType;
     auto piece = phys::chess::getPiece(this->selected_square, this->game_context.board);
-    if (phys::chess::isEmpty(piece) || phys::chess::isWhite(piece) != this->game_context.whiteTurn)
+    if (phys::chess::isEmpty(piece) || phys::chess::isWhite(piece) != this->game_context.is_white_turn)
         return;
     if (phys::chess::isWhite(piece))
     {

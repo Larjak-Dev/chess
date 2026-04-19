@@ -29,7 +29,7 @@ class GameSlide : public Slide
     vec2f offset{};
 
     // Chess
-    phys::chess::Match_Context game_context;
+    phys::chess::MatchContext game_context;
     phys::chess::Vec2 selected_square{4, 1};
 
     phys::vec2f getPosOnBoard(int x, int y);

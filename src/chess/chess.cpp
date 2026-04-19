@@ -1,4 +1,5 @@
 #include "chess.hpp"
+#include "libs/date_time/include/boost/date_time/time_defs.hpp"
 #include <cmath>
 #include <glm/geometric.hpp>
 #include <iterator>
@@ -165,7 +166,7 @@ PieceType phys::chess::getPiece(Vec2 pos, Board &board)
     return type_on_square;
 }
 
-PieceType phys::chess::pathCast(Vec2 direction, Vec2 origin, Board &board)
+std::pair<PieceType, Vec2> phys::chess::rayCast(Vec2 direction, Vec2 origin, Board &board)
 {
     assert(isInside(origin));
 
@@ -174,16 +175,16 @@ PieceType phys::chess::pathCast(Vec2 direction, Vec2 origin, Board &board)
     {
         auto type_on_square = board[ray_pos.x][ray_pos.y];
         if (type_on_square != PieceType::empty)
-            return type_on_square;
+            return std::make_pair(type_on_square, ray_pos);
         ray_pos += direction;
     }
-    return PieceType::empty;
+    return std::make_pair(PieceType::empty, Vec2(-1, -1));
 }
 
-Match_Context phys::chess::move(Vec2 origin, Vec2 dest, Match_Context &context)
+MatchContext phys::chess::move(Vec2 origin, Vec2 dest, MatchContext &context)
 {
 
-    Match_Context context_new = context;
+    MatchContext context_new = context;
     context_new.board = move(origin, dest, context.board);
 
     auto piece_on_dest = getPiece(dest, context.board);
@@ -243,12 +244,12 @@ Match_Context phys::chess::move(Vec2 origin, Vec2 dest, Match_Context &context)
         context_new.pawn_can_get_passanted = {-1, -1};
     }
 
-    context_new.whiteTurn = !context_new.whiteTurn;
+    context_new.is_white_turn = !context_new.is_white_turn;
 
     return context_new;
 }
 
-bool phys::chess::canAttackSquare(Vec2 origin, Vec2 dest, Match_Context &context, Match_Context &new_context,
+bool phys::chess::canAttackSquare(Vec2 origin, Vec2 dest, MatchContext &context, MatchContext &new_context,
                                   bool is_white)
 {
     assert(isInside(dest));
@@ -283,7 +284,7 @@ bool phys::chess::isSafeSquare(Vec2 square_pos, Board &board, bool is_white)
 
     auto isStraightsDangerous = [square_pos, &board, is_white](Vec2 dir)
     {
-        auto piece = pathCast(dir, square_pos, board);
+        auto [piece, pos] = rayCast(dir, square_pos, board);
         auto isDangerous = !isEmpty(piece) && isWhite(piece) != is_white && isStraight(piece);
         return isDangerous;
     };
@@ -300,7 +301,7 @@ bool phys::chess::isSafeSquare(Vec2 square_pos, Board &board, bool is_white)
 
     auto isDiagonalDangerous = [square_pos, &board, is_white](Vec2 dir)
     {
-        auto piece = pathCast(dir, square_pos, board);
+        auto [piece, pos] = rayCast(dir, square_pos, board);
         auto isDangerous = !isEmpty(piece) && isWhite(piece) != is_white && isDiagonal(piece);
         return isDangerous;
     };
@@ -379,7 +380,7 @@ bool phys::chess::isSafeSquare(Vec2 square_pos, Board &board, bool is_white)
     return true;
 }
 
-bool phys::chess::isSafeKing(Match_Context &context, bool is_white)
+bool phys::chess::isSafeKing(MatchContext &context, bool is_white)
 {
     if (is_white)
     {
@@ -391,14 +392,14 @@ bool phys::chess::isSafeKing(Match_Context &context, bool is_white)
     }
 }
 
-void phys::chess::path(Moves &moves, Vec2 origin, Vec2 direction, int length, Match_Context &context, bool is_white,
+void phys::chess::path(Moves &moves, Vec2 origin, Vec2 direction, int length, MatchContext &context, bool is_white,
                        bool can_attack)
 {
     int i = 1;
     Vec2 ray = origin + direction;
     while (i <= length && isInside(ray))
     {
-        Match_Context new_context = move(origin, ray, context);
+        MatchContext new_context = move(origin, ray, context);
         auto is_king_safe = isSafeKing(new_context, is_white);
 
         if (isEmptySquare(ray, context.board))
@@ -418,7 +419,7 @@ void phys::chess::path(Moves &moves, Vec2 origin, Vec2 direction, int length, Ma
     }
 }
 
-void phys::chess::knight(Moves &moves, Vec2 origin, Match_Context &context, bool is_white)
+void phys::chess::knight(Moves &moves, Vec2 origin, MatchContext &context, bool is_white)
 {
 
     auto knight_move = [origin, &context, is_white, &moves](Vec2 diff)
@@ -445,11 +446,44 @@ void phys::chess::knight(Moves &moves, Vec2 origin, Match_Context &context, bool
     knight_move({-1, 2});
     knight_move({1, 2});
 }
-void phys::chess::king(Moves &moves, Vec2 origin, Match_Context &context, bool is_white)
+void phys::chess::king(Moves &moves, Vec2 origin, MatchContext &context, bool is_white)
 {
 
     auto king_move = [origin, &context, is_white, &moves](Vec2 dir)
     { path(moves, origin, dir, 1, context, is_white, true); };
+
+    auto is_rook_castlable = [is_white, context](Vec2 pos)
+    {
+        bool correct_position = pos == Vec2(0, 0) || pos == Vec2(7, 0) || pos == Vec2(0, 7) || pos == Vec2(7, 7);
+        if (!correct_position)
+            return false;
+
+        auto piece_on_position = getPiece(pos, context.board);
+        bool correct_piece = !isEmpty(piece_on_position) && isRook(piece_on_position) && isWhite(piece_on_position);
+    };
+
+    auto king_castle = [origin, &context, is_white, &moves, is_rook_castlable](int dir)
+    {
+        auto castling_rights = is_white ? context.castling_w : context.castling_b;
+        bool king_unmoved = castling_rights.king_unmoved;
+        bool rook_unmoved = dir > 0 ? castling_rights.rook_r_unmoved : castling_rights.rook_l_unmoved;
+
+        PieceType target_piece_type = is_white ? PieceType::w_rook : PieceType::b_rook;
+        auto [piece_type, cord] = rayCast({dir, 0}, origin, context.board);
+
+        bool can_castle = king_unmoved && rook_unmoved && piece_type == target_piece_type && is_rook_castlable(cord);
+        if (!can_castle)
+            return;
+
+        // King safety
+        auto first_step = move(origin, origin + Vec2(dir, 0), context);
+        auto second_step = move(origin, origin + Vec2(dir * 2, 0), context);
+        second_step = move(cord, origin + Vec2(-1, 0), second_step);
+
+        bool can_castle_safely = isSafeKing(first_step, is_white) && isSafeKing(second_step, is_white);
+        if (can_castle_safely)
+            moves.push_back(origin + Vec2(dir * 2, 0));
+    };
 
     king_move({0, 1});
     king_move({1, 1});
@@ -459,9 +493,15 @@ void phys::chess::king(Moves &moves, Vec2 origin, Match_Context &context, bool i
     king_move({-1, -1});
     king_move({-1, 0});
     king_move({-1, 1});
+
+    if (isSafeKing(context, is_white))
+    {
+        king_castle(1);
+        king_castle(-1);
+    }
 }
 
-void phys::chess::rook(Moves &moves, Vec2 origin, Match_Context &context, bool is_white)
+void phys::chess::rook(Moves &moves, Vec2 origin, MatchContext &context, bool is_white)
 {
 
     auto rook_move = [origin, &context, is_white, &moves](Vec2 dir)
@@ -472,7 +512,7 @@ void phys::chess::rook(Moves &moves, Vec2 origin, Match_Context &context, bool i
     rook_move({1, 0});
     rook_move({-1, 0});
 }
-void phys::chess::bishop(Moves &moves, Vec2 origin, Match_Context &context, bool is_white)
+void phys::chess::bishop(Moves &moves, Vec2 origin, MatchContext &context, bool is_white)
 {
 
     auto bishop_move = [origin, &context, is_white, &moves](Vec2 dir)
@@ -484,7 +524,7 @@ void phys::chess::bishop(Moves &moves, Vec2 origin, Match_Context &context, bool
     bishop_move({-1, 1});
 }
 
-void phys::chess::queen(Moves &moves, Vec2 origin, Match_Context &context, bool is_white)
+void phys::chess::queen(Moves &moves, Vec2 origin, MatchContext &context, bool is_white)
 {
     rook(moves, origin, context, is_white);
     bishop(moves, origin, context, is_white);
@@ -493,7 +533,7 @@ void phys::chess::queen(Moves &moves, Vec2 origin, Match_Context &context, bool 
 constexpr int pawn_y_w = 1;
 constexpr int pawn_y_b = 6;
 
-void phys::chess::pawn(Moves &moves, Vec2 origin, Match_Context &context, bool is_white)
+void phys::chess::pawn(Moves &moves, Vec2 origin, MatchContext &context, bool is_white)
 {
 
     auto pawn_diagonal = [origin, &context, is_white, &moves](Vec2 dir)
@@ -550,7 +590,7 @@ void phys::chess::pawn(Moves &moves, Vec2 origin, Match_Context &context, bool i
     }
 }
 
-void phys::chess::getMoves(Moves &out, Vec2 origin, Match_Context &context)
+void phys::chess::getMoves(Moves &out, Vec2 origin, MatchContext &context)
 {
     auto piece = getPiece(origin, context.board);
     if (piece == PieceType::empty)
@@ -576,7 +616,7 @@ void phys::chess::getMoves(Moves &out, Vec2 origin, Match_Context &context)
         queen(out, origin, context, is_white);
 }
 
-void phys::chess::getPromotions(Moves &out, Match_Context &context)
+void phys::chess::getPromotions(Moves &out, MatchContext &context)
 {
 
     auto is_white_king_safe = isSafeKing(context, true);
@@ -598,7 +638,7 @@ void phys::chess::getPromotions(Moves &out, Match_Context &context)
     }
 }
 
-bool phys::chess::isPromotion(Vec2 origin, Match_Context &context)
+bool phys::chess::isPromotion(Vec2 origin, MatchContext &context)
 {
     auto piece = getPiece(origin, context.board);
     if (piece == PieceType::b_pawn && origin.y == 0)
@@ -614,7 +654,7 @@ bool phys::chess::isPromotion(Vec2 origin, Match_Context &context)
     return false;
 }
 
-Match_Context phys::chess::promote(Vec2 origin, PieceType resultType, Match_Context &context)
+MatchContext phys::chess::promote(Vec2 origin, PieceType resultType, MatchContext &context)
 {
     auto piece = getPiece(origin, context.board);
     if (!isPromotion(origin, context))
@@ -627,7 +667,7 @@ Match_Context phys::chess::promote(Vec2 origin, PieceType resultType, Match_Cont
     context_new.board[origin.x][origin.y] = resultType;
 
     context_new.pawn_can_get_passanted = {-1, -1};
-    context_new.whiteTurn = !context_new.whiteTurn;
+    context_new.is_white_turn = !context_new.is_white_turn;
 
     return context_new;
 }
@@ -674,9 +714,9 @@ Board phys::chess::createDefaultBoard()
     createBackRows();
     return board;
 }
-Match_Context phys::chess::createDefaultContext()
+MatchContext phys::chess::createDefaultContext()
 {
-    Match_Context context;
+    MatchContext context;
     context.board = createDefaultBoard();
     context.king_pos_w = {4, 0};
     context.king_pos_b = {4, 7};
